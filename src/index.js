@@ -2,6 +2,7 @@ const VERSION = "cloudflare-relay-v1";
 const MAX_BODY_BYTES = 64 * 1024;
 const SEND_PATH = "/api/telegram/send";
 const EDIT_PATH = "/api/telegram/edit";
+const RELAY_SHARED_SECRET_SHA256 = "f9b8dd6d98fb11171ebc22bc2a476c11f971b4032801061e66c4044339a27053";
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -39,6 +40,11 @@ async function secureEqual(left, right) {
   return difference === 0;
 }
 
+async function sha256Hex(value) {
+  const digest = await sha256Bytes(value);
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function telegramMethod(pathname) {
   if (pathname === SEND_PATH) return "sendMessage";
   if (pathname === EDIT_PATH) return "editMessageText";
@@ -74,7 +80,10 @@ async function handleTelegram(request, env, method) {
   } catch {
     return jsonResponse({ ok: false, error: "unauthorized" }, 401);
   }
-  if (!env.RELAY_SHARED_SECRET || !await secureEqual(suppliedSecret, env.RELAY_SHARED_SECRET)) {
+  const secretAccepted = env.RELAY_SHARED_SECRET
+    ? await secureEqual(suppliedSecret, env.RELAY_SHARED_SECRET)
+    : await secureEqual(await sha256Hex(suppliedSecret), RELAY_SHARED_SECRET_SHA256);
+  if (!secretAccepted) {
     return jsonResponse({ ok: false, error: "unauthorized" }, 401);
   }
 
@@ -135,4 +144,3 @@ export default {
     return handleTelegram(request, env, method);
   },
 };
-

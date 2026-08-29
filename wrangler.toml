@@ -1,0 +1,5 @@
+name = "football-ai-lab-telegram-relay"
+main = "src/index.js"
+compatibility_date = "2026-08-29"
+workers_dev = true
+

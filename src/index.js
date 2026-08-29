@@ -2,7 +2,7 @@ const VERSION = "cloudflare-relay-v1";
 const MAX_BODY_BYTES = 64 * 1024;
 const SEND_PATH = "/api/telegram/send";
 const EDIT_PATH = "/api/telegram/edit";
-const RELAY_SHARED_SECRET_SHA256 = "f9b8dd6d98fb11171ebc22bc2a476c11f971b4032801061e66c4044339a27053";
+const RELAY_SHARED_SECRET_SHA256 = "9932200b312af10b627e9f714d4402e119587e758cae715c0be661132fd4fe09";
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {

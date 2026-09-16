@@ -1,17 +1,21 @@
 # Football AI Lab Telegram relay
 
-Cloudflare Worker transport between the Yandex Cloud live monitor and Telegram.
+Cloudflare Worker transport with protected secret bindings. Production publishes
+from main through Cloudflare Builds. Non-production branches upload versions.
 
-Routes:
+Routes: GET /health, POST /api/telegram/send, POST /api/telegram/edit.
 
-- `GET /health`
-- `POST /api/telegram/send`
-- `POST /api/telegram/edit`
+Required encrypted Worker secrets: RELAY_SHARED_SECRET and TELEGRAM_BOT_TOKEN.
+Missing configuration fails closed. There is no embedded-key verifier and no
+caller-supplied bot-token fallback. Secret values must never be committed.
 
-Required Worker secrets:
+Requests use the existing form contract; only allowlisted Telegram fields are
+forwarded. Body streaming is limited to 64 KiB. A failed/uncertain upstream request
+is not retried automatically. This transport does not provide durable request
+deduplication; the calling system must provide its own delivery journal.
 
-- `RELAY_SHARED_SECRET`
-- `TELEGRAM_BOT_TOKEN`
+Offline tests: `node --test test/index.test.mjs`. All upstream requests are mocked.
+Do not send real Telegram messages as deployment probes.
 
-The relay accepts the current Yandex form contract, authenticates it, strips
-relay-only fields, and forwards only the Telegram request payload.
+Deploy only after both protected bindings are configured. Preview URLs are
+disabled. Never roll back to an exposed credential or reintroduce a key fallback.

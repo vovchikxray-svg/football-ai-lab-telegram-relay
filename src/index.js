@@ -1,8 +1,7 @@
-const VERSION = "cloudflare-relay-v1";
+const VERSION = "cloudflare-relay-v2-secrets-only";
 const MAX_BODY_BYTES = 64 * 1024;
 const SEND_PATH = "/api/telegram/send";
 const EDIT_PATH = "/api/telegram/edit";
-const RELAY_SHARED_SECRET_SHA256 = "9932200b312af10b627e9f714d4402e119587e758cae715c0be661132fd4fe09";
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -40,11 +39,6 @@ async function secureEqual(left, right) {
   return difference === 0;
 }
 
-async function sha256Hex(value) {
-  const digest = await sha256Bytes(value);
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 function telegramMethod(pathname) {
   if (pathname === SEND_PATH) return "sendMessage";
   if (pathname === EDIT_PATH) return "editMessageText";
@@ -65,12 +59,24 @@ function telegramForm(source, method) {
 }
 
 async function handleTelegram(request, env, method) {
+  const sharedSecret = typeof env?.RELAY_SHARED_SECRET === "string" ? env.RELAY_SHARED_SECRET : "";
+  const botToken = typeof env?.TELEGRAM_BOT_TOKEN === "string" ? env.TELEGRAM_BOT_TOKEN.trim() : "";
+  // No embedded verifier and no caller-supplied bot-token fallback. Missing
+  // protected configuration must never silently select an older auth path.
+  if (!sharedSecret.trim() || !botToken) {
+    return jsonResponse({ ok: false, error: "relay_not_configured" }, 503);
+  }
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
     return jsonResponse({ ok: false, error: "payload_too_large" }, 413);
   }
-  const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) {
+  let rawBody;
+  try {
+    rawBody = await readBoundedBody(request);
+  } catch {
+    return jsonResponse({ ok: false, error: "invalid_request" }, 400);
+  }
+  if (rawBody === null) {
     return jsonResponse({ ok: false, error: "payload_too_large" }, 413);
   }
   const form = new URLSearchParams(rawBody);
@@ -80,23 +86,12 @@ async function handleTelegram(request, env, method) {
   } catch {
     return jsonResponse({ ok: false, error: "unauthorized" }, 401);
   }
-  const secretAccepted = env.RELAY_SHARED_SECRET
-    ? await secureEqual(suppliedSecret, env.RELAY_SHARED_SECRET)
-    : await secureEqual(await sha256Hex(suppliedSecret), RELAY_SHARED_SECRET_SHA256);
-  if (!secretAccepted) {
+  if (!await secureEqual(suppliedSecret, sharedSecret)) {
     return jsonResponse({ ok: false, error: "unauthorized" }, 401);
   }
 
-  let botToken = String(env.TELEGRAM_BOT_TOKEN || "").trim();
-  if (!botToken) {
-    try {
-      botToken = decodeBase64Url(form.get("_relay_bot_token_b64")).trim();
-    } catch {
-      botToken = "";
-    }
-  }
   const telegramBody = telegramForm(form, method);
-  if (!botToken || !telegramBody.get("chat_id") || !telegramBody.get("text")) {
+  if (!telegramBody.get("chat_id") || !telegramBody.get("text")) {
     return jsonResponse({ ok: false, error: "invalid_request" }, 400);
   }
   if (method === "editMessageText" && !telegramBody.get("message_id")) {
@@ -129,6 +124,34 @@ async function handleTelegram(request, env, method) {
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+async function readBoundedBody(request) {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 
 export default {
